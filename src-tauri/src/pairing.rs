@@ -53,8 +53,19 @@ impl PairingData {
 
     /// Generate QR code as SVG string
     pub fn generate_qr_svg(&self) -> Result<String> {
-        let json = serde_json::to_string(self)?;
-        let code = QrCode::new(json.as_bytes())?;
+        // Create URI format that mobile app expects:
+        // copypaws://pair?ip=xxx&port=xxx&token=xxx&secret=xxx&name=xxx&id=xxx
+        let qr_uri = format!(
+            "copypaws://pair?ip={}&port={}&token={}&secret={}&name={}&id={}",
+            urlencoding::encode(&self.server_ip),
+            self.server_port,
+            urlencoding::encode(&self.pairing_token),
+            urlencoding::encode(&self.shared_secret),
+            urlencoding::encode("Desktop Hub"),
+            urlencoding::encode(&self.server_id)
+        );
+        
+        let code = QrCode::new(qr_uri.as_bytes())?;
         
         let svg_str = code.render::<svg::Color>()
             .min_dimensions(200, 200)

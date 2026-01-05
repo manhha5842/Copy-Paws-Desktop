@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import HistoryWindow from "./HistoryWindow";
 import {
   Home,
   History,
@@ -62,6 +64,7 @@ interface SyncStatus {
 }
 
 function App() {
+  const [windowLabel, setWindowLabel] = useState<string>("");
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [clips, setClips] = useState<Clip[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -71,10 +74,29 @@ function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    // Check window label
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const label = getCurrentWindow().label;
+        setWindowLabel(label);
+      } catch (e) {
+        console.error("Failed to get window label", e);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    if (windowLabel === "history") return; // Don't load main data for history window
+    
+    loadData();
+    const interval = setInterval(loadData, 2000); // Update every 2 seconds for faster device status updates
+    return () => clearInterval(interval);
+  }, [windowLabel]);
+
+  // If history window, render only that
+  if (windowLabel === "history") {
+      return <HistoryWindow />;
+  }
 
   // Check if we're running in Tauri context
   const isTauri = () => {
@@ -108,6 +130,28 @@ function App() {
       console.error("Failed to load sync status:", error);
     }
   }
+
+  // Auto-refresh pairing QR if it's about to expire
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (showPairing && pairingData) {
+      const checkExpiry = () => {
+        const now = Date.now() / 1000;
+        // Refresh if expired or less than 30s remaining
+        if (pairingData.expires_at - now < 30) {
+          console.log("Refreshing pairing QR code...");
+          generatePairingQR();
+        }
+      };
+      
+      // Check every 5 seconds
+      interval = setInterval(checkExpiry, 5000);
+    }
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [showPairing, pairingData]);
 
   async function generatePairingQR() {
     try {
@@ -206,6 +250,31 @@ function App() {
     } catch (error) {
       console.error("Failed to add test device:", error);
     }
+  }
+
+  async function manualSync() {
+    if (!isTauri()) return;
+    try {
+      await invoke("manual_sync");
+      console.log("Manual sync triggered");
+      // Optionally show a toast notification
+    } catch (error) {
+      console.error("Failed to trigger manual sync:", error);
+    }
+  }
+  
+  async function toggleAutostart(enabled: boolean) {
+      if (!isTauri()) return;
+      try {
+           if (enabled) {
+               await invoke("plugin:autostart|enable");
+           } else {
+               await invoke("plugin:autostart|disable");
+           }
+           console.log("Autostart toggled:", enabled);
+      } catch (e) {
+          console.error("Failed to toggle autostart:", e);
+      }
   }
 
 
@@ -524,6 +593,49 @@ function App() {
               <p className="subtitle">Configure your clipboard hub</p>
             </div>
             
+             <div className="settings-section">
+              <div className="section-header">
+                <Monitor size={20} />
+                <h3>System</h3>
+              </div>
+              <div className="setting-item">
+                <div className="setting-info">
+                  <label>Start with Windows</label>
+                  <span className="setting-description">Launch CopyPaws automatically</span>
+                </div>
+                <div className="toggle-switch">
+                    <input type="checkbox" onChange={(e) => toggleAutostart(e.target.checked)} />
+                    <span className="slider"></span>
+                </div>
+              </div>
+              
+              <div className="setting-sub-header" style={{marginTop: '16px', marginBottom: '8px', fontWeight: 'bold'}}>Global Hotkeys</div>
+              
+              <div className="setting-item">
+                <div className="setting-info">
+                  <label>Push Clipboard</label>
+                  <span className="setting-description">Sync current clipboard manually</span>
+                </div>
+                <div className="hotkey-display">Ctrl+Alt+C</div>
+              </div>
+              
+              <div className="setting-item">
+                <div className="setting-info">
+                  <label>Paste Simulated</label>
+                  <span className="setting-description">Simulate Ctrl+V typing</span>
+                </div>
+                <div className="hotkey-display">Ctrl+Alt+V</div>
+              </div>
+
+               <div className="setting-item">
+                <div className="setting-info">
+                  <label>Show History</label>
+                  <span className="setting-description">Open Clipboard History list</span>
+                </div>
+                <div className="hotkey-display">Win+Alt+V</div>
+              </div>
+            </div>
+            
             <div className="settings-section">
               <div className="section-header">
                 <Wifi size={20} />
@@ -596,7 +708,13 @@ function App() {
                   <p className="mode-description">Clipboard changes are automatically synced to all connected devices in real-time.</p>
                 )}
                 {syncStatus?.sync_mode === "HotkeyOnly" && (
-                  <p className="mode-description">Clipboard is only synced when you press the designated hotkey.</p>
+                  <>
+                    <p className="mode-description">Clipboard is only synced when you press the designated hotkey or manually trigger sync.</p>
+                    <button className="primary-button" onClick={manualSync} style={{ marginTop: "12px" }}>
+                      <Copy size={18} />
+                      Trigger Manual Sync
+                    </button>
+                  </>
                 )}
                 {syncStatus?.sync_mode === "ReceiveOnly" && (
                   <p className="mode-description">This device will receive clips from other devices, but won't send any.</p>

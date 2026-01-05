@@ -65,6 +65,31 @@ impl Database {
         Ok(devices)
     }
 
+    pub fn get_device(&self, device_id: &str) -> Result<Option<Device>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT device_id, name, shared_secret, platform, last_seen, is_blocked, created_at
+             FROM devices WHERE device_id = ?1"
+        )?;
+
+        let mut devices = stmt.query_map(params![device_id], |row| {
+            Ok(Device {
+                device_id: row.get(0)?,
+                name: row.get(1)?,
+                shared_secret: row.get(2)?,
+                platform: row.get(3)?,
+                last_seen: row.get(4)?,
+                is_blocked: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?;
+
+        if let Some(device) = devices.next() {
+            Ok(Some(device?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn update_device_name(&self, device_id: &str, new_name: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE devices SET name = ?1 WHERE device_id = ?2",

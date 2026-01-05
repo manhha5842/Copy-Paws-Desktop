@@ -32,6 +32,14 @@ pub struct AppSettings {
     pub retention_max_items: usize,
     pub retention_ttl_days: i64,
     pub autostart: bool,
+    pub hotkeys: HotkeysConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotkeysConfig {
+    pub push: Option<String>,
+    pub paste: Option<String>,
+    pub history: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -51,6 +59,11 @@ impl Default for AppSettings {
             retention_max_items: 1000,
             retention_ttl_days: 30,
             autostart: false,
+            hotkeys: HotkeysConfig {
+                push: Some("Ctrl+Alt+C".to_string()),
+                paste: Some("Ctrl+Alt+V".to_string()),
+                history: Some("Super+Alt+V".to_string()),
+            },
         }
     }
 }
@@ -120,6 +133,10 @@ pub enum WsMessage {
         success: bool,
         message: String,
         encryption_key: Option<String>,
+    },
+    #[serde(rename = "HANDSHAKE")]
+    Handshake {
+        device_id: String,
     },
 }
 

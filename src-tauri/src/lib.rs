@@ -8,6 +8,8 @@ mod clipboard;
 mod pairing;
 mod sync_manager;
 mod mdns;
+mod shortcuts;
+use shortcuts::ShortcutsManager;
 
 use database::{Database, models::*};
 use pairing::PairingManager;
@@ -16,9 +18,7 @@ use clipboard::ClipboardMonitor;
 use sync_manager::SyncManager;
 use mdns::MdnsService;
 use std::sync::{Arc, Mutex};
-use tauri::{State, Manager, AppHandle};
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{TrayIcon, TrayIconBuilder};
+use tauri::{Manager, State};
 use anyhow::Result;
 use uuid::Uuid;
 use tokio::sync::RwLock;
@@ -63,10 +63,33 @@ async fn get_clips(limit: usize, state: State<'_, AppState>) -> Result<Vec<Clip>
 }
 
 #[tauri::command]
-async fn get_devices(state: State<'_, AppState>) -> Result<Vec<Device>, String> {
-    let db = state.db.lock().unwrap();
-    db.get_devices()
-        .map_err(|e| format!("Failed to get devices: {}", e))
+async fn get_devices(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    // Get devices from DB
+    let devices = {
+        let db = state.db.lock().unwrap();
+        db.get_devices()
+            .map_err(|e| format!("Failed to get devices: {}", e))?
+    };
+    
+    // Get connected device IDs from WebSocket server
+    let ws_server = state.ws_server.read().await;
+    let connected_device_ids = ws_server.get_connected_device_ids().await;
+    
+    // Convert devices to JSON with is_connected field
+    let devices_with_status: Vec<serde_json::Value> = devices.into_iter().map(|device| {
+        let is_connected = connected_device_ids.contains(&device.device_id);
+        
+        serde_json::json!({
+            "device_id": device.device_id,
+            "name": device.name,
+            "platform": device.platform,
+            "last_seen": device.last_seen,
+            "is_blocked": device.is_blocked,
+            "is_connected": is_connected,
+        })
+    }).collect();
+    
+    Ok(devices_with_status)
 }
 
 #[tauri::command]
@@ -313,6 +336,7 @@ async fn get_network_info(state: State<'_, AppState>) -> Result<serde_json::Valu
     }))
 }
 
+
 #[tauri::command]
 async fn copy_to_clipboard(content: String) -> Result<(), String> {
     use arboard::Clipboard;
@@ -324,6 +348,17 @@ async fn copy_to_clipboard(content: String) -> Result<(), String> {
     
     Ok(())
 }
+
+#[tauri::command]
+async fn manual_sync(state: State<'_, AppState>) -> Result<(), String> {
+    // Trigger manual sync (for Hotkey-only mode)
+    state.sync_manager.manual_sync().await
+        .map_err(|e| format!("Failed to trigger manual sync: {}", e))?;
+    
+    println!("Manual sync triggered");
+    Ok(())
+}
+
 
 // Test commands for development
 #[tauri::command]
@@ -383,6 +418,10 @@ async fn add_test_device(name: String, state: State<'_, AppState>) -> Result<(),
     Ok(())
 }
 
+
+
+// ... existing code ...
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Generate server ID
@@ -390,6 +429,13 @@ pub fn run() {
     
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(move |app, shortcut, event| {
+            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                let shortcuts_manager = ShortcutsManager::new(app.clone());
+                shortcuts_manager.handle_shortcut_event(shortcut.to_string());
+            }
+        }).build())
         .setup(move |app| {
             // Get app data directory using portable approach
             let app_dir = if cfg!(target_os = "windows") {
@@ -469,6 +515,16 @@ pub fn run() {
 
             // Manage state
             app.manage(app_state);
+
+            // Register shortcuts
+            let shortcuts_manager = ShortcutsManager::new(app.handle().clone());
+            tauri::async_runtime::spawn(async move {
+                // Give some time for app to initialize state
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                if let Err(e) = shortcuts_manager.register_shortcuts().await {
+                   eprintln!("Failed to register shortcuts: {}", e);
+                }
+            });
             
             // Start WebSocket server in background
             let ws_clone = ws_server.clone();
@@ -504,6 +560,7 @@ pub fn run() {
             set_sync_mode,
             get_network_info,
             copy_to_clipboard,
+            manual_sync,
             add_test_clip,
             add_test_device,
         ])
