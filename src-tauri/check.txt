@@ -1,0 +1,105 @@
+﻿cargo :     Checking 
+copypaws v0.1.0 (M:\Project\C
+opyPaws\Desktop\Desktop\src-t
+auri)
+At line:1 char:1
++ cargo check 2>&1 | 
+Out-File -FilePath check.txt 
+-Encoding utf8; Get-C ...
++ ~~~~~~~~~~~~~~~~
+    + CategoryInfo           
+   : NotSpecified: (    Che  
+  cking co...ktop\src-taur   
+ i):String) [], RemoteExc    
+eption
+    + FullyQualifiedErrorId  
+   : NativeCommandError
+ 
+warning: unused import: 
+`AppHandle`
+  --> src\lib.rs:19:29
+   |
+19 | use tauri::{State, 
+Manager, AppHandle};
+   |                         
+    ^^^^^^^^^
+   |
+   = note: 
+`#[warn(unused_imports)]` 
+(part of `#[warn(unused)]`) 
+on by default
+
+warning: unused imports: 
+`MenuItem` and `Menu`
+  --> src\lib.rs:20:19
+   |
+20 | use tauri::menu::{Menu, 
+MenuItem};
+   |                   ^^^^  
+^^^^^^^^
+
+warning: unused imports: 
+`TrayIconBuilder` and 
+`TrayIcon`
+  --> src\lib.rs:21:19
+   |
+21 | use 
+tauri::tray::{TrayIcon, 
+TrayIconBuilder};
+   |                   
+^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: struct 
+`PairingData` is never 
+constructed
+  --> 
+src\database\models.rs:73:12
+   |
+73 | pub struct PairingData {
+   |            ^^^^^^^^^^^
+   |
+   = note: 
+`#[warn(dead_code)]` (part 
+of `#[warn(unused)]`) on by 
+default
+
+warning: struct 
+`EncryptedPayload` is never 
+constructed
+  --> 
+src\database\models.rs:81:12
+   |
+81 | pub struct 
+EncryptedPayload {
+   |            
+^^^^^^^^^^^^^^^^
+
+warning: fields `device_id` 
+and `device_name` are never 
+read
+  --> src\websocket.rs:23:9
+   |
+22 | pub struct ClientInfo {
+   |            ---------- 
+fields in this struct
+23 |     pub device_id: 
+String,
+   |         ^^^^^^^^^
+24 |     pub device_name: 
+String,
+   |         ^^^^^^^^^^^
+   |
+   = note: `ClientInfo` has 
+a derived impl for the trait 
+`Clone`, but this is 
+intentionally ignored during 
+dead code analysis
+
+warning: `copypaws` (lib) 
+generated 6 warnings (run 
+`cargo fix --lib -p 
+copypaws` to apply 3 
+suggestions)
+    Finished `dev` profile 
+[unoptimized + debuginfo] 
+target(s) in 5.75s

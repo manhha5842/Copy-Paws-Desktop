@@ -1,0 +1,162 @@
+﻿cargo :     Blocking waiting 
+for file lock on package 
+cache
+At line:1 char:1
++ cargo check 2>&1 | 
+Out-File -FilePath 
+errors.txt -Encoding utf8; 
+Get- ...
++ ~~~~~~~~~~~~~~~~
+    + CategoryInfo           
+   : NotSpecified: (    Blo  
+  cking wa...n package cac   
+ he:String) [], RemoteExc    
+eption
+    + FullyQualifiedErrorId  
+   : NativeCommandError
+ 
+    Blocking waiting for 
+file lock on package cache
+    Blocking waiting for 
+file lock on package cache
+    Checking copypaws v0.1.0 
+(M:\Project\CopyPaws\Desktop\
+Desktop\src-tauri)
+warning: struct 
+`PairingData` is never 
+constructed
+  --> 
+src\database\models.rs:73:12
+   |
+73 | pub struct PairingData {
+   |            ^^^^^^^^^^^
+   |
+   = note: 
+`#[warn(dead_code)]` (part 
+of `#[warn(unused)]`) on by 
+default
+
+warning: struct 
+`EncryptedPayload` is never 
+constructed
+  --> 
+src\database\models.rs:81:12
+   |
+81 | pub struct 
+EncryptedPayload {
+   |            
+^^^^^^^^^^^^^^^^
+
+warning: fields `device_id` 
+and `device_name` are never 
+read
+  --> src\websocket.rs:23:9
+   |
+22 | pub struct ClientInfo {
+   |            ---------- 
+fields in this struct
+23 |     pub device_id: 
+String,
+   |         ^^^^^^^^^
+24 |     pub device_name: 
+String,
+   |         ^^^^^^^^^^^
+   |
+   = note: `ClientInfo` has 
+a derived impl for the trait 
+`Clone`, but this is 
+intentionally ignored during 
+dead code analysis
+
+warning: constant 
+`SERVICE_TYPE` is never used
+  --> src\mdns.rs:10:7
+   |
+10 | const SERVICE_TYPE: 
+&str = 
+"_copypaws._tcp.local.";
+   |       ^^^^^^^^^^^^
+
+warning: constant 
+`SERVICE_NAME` is never used
+  --> src\mdns.rs:11:7
+   |
+11 | const SERVICE_NAME: 
+&str = "CopyPaws Desktop";
+   |       ^^^^^^^^^^^^
+
+warning: struct 
+`MdnsService` is never 
+constructed
+  --> src\mdns.rs:13:12
+   |
+13 | pub struct MdnsService {
+   |            ^^^^^^^^^^^
+
+warning: struct 
+`DiscoveredService` is never 
+constructed
+  --> src\mdns.rs:21:12
+   |
+21 | pub struct 
+DiscoveredService {
+   |            
+^^^^^^^^^^^^^^^^^
+
+warning: associated items 
+`new`, `start_advertising`, 
+`stop_advertising`, 
+`start_browsing`, 
+`get_discovered_services`, 
+and `get_service` are never 
+used
+   --> src\mdns.rs:31:12
+    |
+ 29 | impl MdnsService {
+    | ---------------- 
+associated items in this 
+implementation
+ 30 |     /// Create a new 
+mDNS service
+ 31 |     pub fn 
+new(server_id: String, port: 
+u16) -> Self {
+    |            ^^^
+...
+ 41 |     pub fn 
+start_advertising(&mut self) 
+-> Result<()> {
+    |            
+^^^^^^^^^^^^^^^^^
+...
+ 74 |     pub fn 
+stop_advertising(&mut self) 
+-> Result<()> {
+    |            
+^^^^^^^^^^^^^^^^
+...
+ 83 |     pub async fn 
+start_browsing(&self) -> Resu
+lt<mpsc::UnboundedReceiver<Di
+scoveredService>> {
+    |                  
+^^^^^^^^^^^^^^
+...
+146 |     pub async fn get_di
+scovered_services(&self) -> 
+Vec<DiscoveredService> {
+    |                  
+^^^^^^^^^^^^^^^^^^^^^^^
+...
+152 |     pub async fn 
+get_service(&self, 
+instance_name: &str) -> 
+Option<DiscoveredService> {
+    |                  
+^^^^^^^^^^^
+
+warning: `copypaws` (lib) 
+generated 8 warnings
+    Finished `dev` profile 
+[unoptimized + debuginfo] 
+target(s) in 1m 13s
