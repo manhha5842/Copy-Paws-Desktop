@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 use chrono::Utc;
 
-use crate::clipboard::{ClipboardMonitor, ClipboardChange};
+use crate::clipboard::{ClipboardMonitor, ClipboardChange, ClipboardContentType};
 use crate::crypto::calculate_hash;
 use crate::database::{Database, models::*};
 use crate::websocket::{WebSocketServer, IncomingMessage};
@@ -24,8 +24,8 @@ pub struct SyncManager {
 
 #[derive(Debug, Clone)]
 pub enum ClipEvent {
-    LocalCopy { content: String, source_app: Option<String> },
-    RemotePush { content: String, device_id: String, clip_id: String },
+    LocalCopy { content: String, content_type: ClipboardContentType, source_app: Option<String> },
+    RemotePush { content: String, content_type: ClipboardContentType, device_id: String, clip_id: String },
 }
 
 impl SyncManager {
@@ -61,16 +61,16 @@ impl SyncManager {
         tokio::spawn(async move {
             while let Some(event) = clip_rx.recv().await {
                 match event {
-                    ClipEvent::LocalCopy { content, source_app } => {
+                    ClipEvent::LocalCopy { content, content_type, source_app } => {
                         if let Err(e) = Self::handle_local_copy(
-                            &db, &ws_server, &settings, content, source_app
+                            &db, &ws_server, &settings, content, content_type, source_app
                         ).await {
                             eprintln!("Error handling local copy: {}", e);
                         }
                     }
-                    ClipEvent::RemotePush { content, device_id, clip_id } => {
+                    ClipEvent::RemotePush { content, content_type, device_id, clip_id } => {
                         if let Err(e) = Self::handle_remote_push(
-                            &db, content, device_id, clip_id
+                            &db, content, content_type, device_id, clip_id
                         ).await {
                             eprintln!("Error handling remote push: {}", e);
                         }
@@ -91,21 +91,36 @@ impl SyncManager {
             while let Some(msg) = rx.recv().await {
                 println!("Received incoming message from device: {}", msg.device_id);
                 match msg.message {
-                    WsMessage::ClipPush { payload_encrypted, iv: _, device_info: _ } => {
+                    WsMessage::ClipPush { payload_encrypted, iv: _, content_type, device_info: _ } => {
                         // TODO: Decrypt payload using device's shared secret
                         let content = payload_encrypted; // Placeholder - should decrypt
+                        let clip_content_type = match content_type.as_deref() {
+                            Some("image") => ClipboardContentType::Image,
+                            _ => ClipboardContentType::Text,
+                        };
                         
                         let clip_id = Uuid::new_v4().to_string();
                         
-                        // Set local clipboard
-                        if let Err(e) = clipboard_monitor.set_clipboard(&content, &clip_id).await {
-                            eprintln!("Failed to set clipboard: {}", e);
-                            continue;
+                        // Set local clipboard based on content type
+                        match clip_content_type {
+                            ClipboardContentType::Image => {
+                                if let Err(e) = clipboard_monitor.set_clipboard_image(&content, &clip_id).await {
+                                    eprintln!("Failed to set clipboard image: {}", e);
+                                    continue;
+                                }
+                            }
+                            ClipboardContentType::Text => {
+                                if let Err(e) = clipboard_monitor.set_clipboard(&content, &clip_id).await {
+                                    eprintln!("Failed to set clipboard: {}", e);
+                                    continue;
+                                }
+                            }
                         }
                         
                         // Store in database
                         let _ = clip_tx_incoming.send(ClipEvent::RemotePush {
                             content,
+                            content_type: clip_content_type,
                             device_id: msg.device_id,
                             clip_id,
                         });
@@ -124,6 +139,7 @@ impl SyncManager {
                                 clip_id: clip.id,
                                 payload_encrypted: clip.content, // TODO: Encrypt
                                 iv: String::new(),
+                                content_type: clip.content_type.clone(),
                                 source_app: clip.source_app,
                                 timestamp: Utc::now().timestamp(),
                             };
@@ -142,6 +158,7 @@ impl SyncManager {
         self.clipboard_monitor.start_monitoring(move |change: ClipboardChange| {
             let _ = clip_tx_clone.send(ClipEvent::LocalCopy {
                 content: change.content,
+                content_type: change.content_type,
                 source_app: None, // TODO: Detect source app
             });
             Ok(())
@@ -156,6 +173,7 @@ impl SyncManager {
         ws_server: &Arc<RwLock<WebSocketServer>>,
         settings: &Arc<RwLock<AppSettings>>,
         content: String,
+        content_type: ClipboardContentType,
         source_app: Option<String>,
     ) -> Result<()> {
         // Check sync mode
@@ -174,9 +192,13 @@ impl SyncManager {
         }
         drop(current_settings);
 
-        // Validate content size (2MB limit)
-        if content.len() > 2 * 1024 * 1024 {
-            eprintln!("Content exceeds 2MB limit, skipping sync");
+        // Validate content size based on type
+        let max_size = match content_type {
+            ClipboardContentType::Text => 2 * 1024 * 1024,
+            ClipboardContentType::Image => 10 * 1024 * 1024,
+        };
+        if content.len() > max_size {
+            eprintln!("Content exceeds size limit, skipping sync");
             return Ok(());
         }
 
@@ -194,12 +216,19 @@ impl SyncManager {
             }
         }
 
+        // Determine content_type string
+        let content_type_str = match content_type {
+            ClipboardContentType::Text => "text",
+            ClipboardContentType::Image => "image",
+        };
+
         // Create clip record
         let clip_id = Uuid::new_v4().to_string();
         let clip = Clip {
             id: clip_id.clone(),
             content: content.clone(),
             content_hash: content_hash.clone(),
+            content_type: Some(content_type_str.to_string()),
             source_device: None, // None for local clips
             source_app,
             created_at: Utc::now().to_rfc3339(),
@@ -218,6 +247,7 @@ impl SyncManager {
             clip_id: clip_id.clone(),
             payload_encrypted: content.clone(), // TODO: Encrypt per-device
             iv: String::new(), // TODO: Generate IV
+            content_type: Some(content_type_str.to_string()),
             source_app: clip.source_app.clone(),
             timestamp: Utc::now().timestamp(),
         };
@@ -232,17 +262,25 @@ impl SyncManager {
     async fn handle_remote_push(
         db: &Arc<Mutex<Database>>,
         content: String,
+        content_type: ClipboardContentType,
         device_id: String,
         clip_id: String,
     ) -> Result<()> {
         // Calculate hash
         let content_hash = calculate_hash(&content);
+        
+        // Determine content_type string
+        let content_type_str = match content_type {
+            ClipboardContentType::Text => "text",
+            ClipboardContentType::Image => "image",
+        };
 
         // Create clip record
         let clip = Clip {
             id: clip_id.clone(),
             content: content.clone(),
             content_hash,
+            content_type: Some(content_type_str.to_string()),
             source_device: Some(device_id.clone()),
             source_app: None,
             created_at: Utc::now().to_rfc3339(),
@@ -263,18 +301,30 @@ impl SyncManager {
     /// Process incoming WebSocket message
     pub async fn process_message(&self, device_id: &str, message: WsMessage) -> Result<()> {
         match message {
-            WsMessage::ClipPush { payload_encrypted, iv: _, device_info: _ } => {
+            WsMessage::ClipPush { payload_encrypted, iv: _, content_type, device_info: _ } => {
                 // TODO: Decrypt payload using device's shared secret
                 let content = payload_encrypted; // Placeholder - should decrypt
+                let clip_content_type = match content_type.as_deref() {
+                    Some("image") => ClipboardContentType::Image,
+                    _ => ClipboardContentType::Text,
+                };
                 
                 let clip_id = Uuid::new_v4().to_string();
                 
-                // Set local clipboard
-                self.clipboard_monitor.set_clipboard(&content, &clip_id).await?;
+                // Set local clipboard based on content type
+                match clip_content_type {
+                    ClipboardContentType::Image => {
+                        self.clipboard_monitor.set_clipboard_image(&content, &clip_id).await?;
+                    }
+                    ClipboardContentType::Text => {
+                        self.clipboard_monitor.set_clipboard(&content, &clip_id).await?;
+                    }
+                }
                 
                 // Store in database
                 let event = ClipEvent::RemotePush {
                     content,
+                    content_type: clip_content_type,
                     device_id: device_id.to_string(),
                     clip_id,
                 };
@@ -289,6 +339,7 @@ impl SyncManager {
                         clip_id: clip.id,
                         payload_encrypted: clip.content, // TODO: Encrypt
                         iv: String::new(),
+                        content_type: clip.content_type.clone(),
                         source_app: clip.source_app,
                         timestamp: Utc::now().timestamp(),
                     };
@@ -307,6 +358,7 @@ impl SyncManager {
         let content = self.clipboard_monitor.get_clipboard().await?;
         let event = ClipEvent::LocalCopy {
             content,
+            content_type: ClipboardContentType::Text, // Manual sync assumes text
             source_app: None,
         };
         let _ = self.clip_tx.send(event);
@@ -341,12 +393,14 @@ mod tests {
     fn test_clip_event_creation() {
         let event = ClipEvent::LocalCopy {
             content: "Test content".to_string(),
+            content_type: ClipboardContentType::Text,
             source_app: Some("Test App".to_string()),
         };
         
         match event {
-            ClipEvent::LocalCopy { content, source_app } => {
+            ClipEvent::LocalCopy { content, content_type, source_app } => {
                 assert_eq!(content, "Test content");
+                assert_eq!(content_type, ClipboardContentType::Text);
                 assert_eq!(source_app, Some("Test App".to_string()));
             }
             _ => panic!("Wrong event type"),

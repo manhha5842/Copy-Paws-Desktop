@@ -5,6 +5,7 @@ use futures_util::{StreamExt, SinkExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -20,10 +21,12 @@ type ClientMap = Arc<RwLock<HashMap<String, ClientInfo>>>;
 
 #[derive(Clone)]
 pub struct ClientInfo {
+    #[allow(dead_code)]
     pub device_id: String,
     pub device_name: String,
     pub sender: ClientSender,
     pub crypto: Arc<Crypto>,
+    pub last_pong: Arc<Mutex<Instant>>,
 }
 
 pub struct WebSocketServer {
@@ -152,6 +155,55 @@ impl WebSocketServer {
             }
         });
 
+        // Spawn heartbeat loop to detect stale connections
+        let heartbeat_clients = clients.clone();
+        tokio::spawn(async move {
+            const PING_INTERVAL_SECS: u64 = 30;
+            const PONG_TIMEOUT_SECS: u64 = 90;
+            
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(PING_INTERVAL_SECS)).await;
+                
+                let mut stale_devices: Vec<String> = Vec::new();
+                
+                // Check all clients and send PING
+                {
+                    let clients_read = heartbeat_clients.read().await;
+                    let client_count = clients_read.len();
+                    
+                    if client_count > 0 {
+                        println!("[Heartbeat] Sending PING to {} client(s)", client_count);
+                    }
+                    
+                    for (device_id, client_info) in clients_read.iter() {
+                        // Check if client has timed out
+                        let last_pong_time = client_info.last_pong.lock().unwrap();
+                        let elapsed = last_pong_time.elapsed().as_secs();
+                        
+                        if elapsed > PONG_TIMEOUT_SECS {
+                            println!("[Heartbeat] Device {} timed out (no pong for {}s)", device_id, elapsed);
+                            stale_devices.push(device_id.clone());
+                        } else {
+                            // Send PING
+                            let ping_msg = serde_json::json!({"type": "PING"});
+                            if let Ok(msg_str) = serde_json::to_string(&ping_msg) {
+                                let _ = client_info.sender.send(Message::Text(msg_str));
+                            }
+                        }
+                    }
+                }
+                
+                // Remove stale clients
+                if !stale_devices.is_empty() {
+                    let mut clients_write = heartbeat_clients.write().await;
+                    for device_id in stale_devices {
+                        clients_write.remove(&device_id);
+                        println!("[Heartbeat] Removed stale device: {}", device_id);
+                    }
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -237,6 +289,7 @@ impl WebSocketServer {
             device_name,
             sender,
             crypto,
+            last_pong: Arc::new(Mutex::new(Instant::now())),
         };
         
         let mut clients = self.clients.write().await;
@@ -312,6 +365,19 @@ async fn handle_connection(
                             };
                             
                             if let Some(device) = device_opt {
+                                if device.is_blocked {
+                                    println!("Handshake rejected: Device blocked {}", dev_id_handshake);
+                                    let response = serde_json::json!({
+                                        "type": "HANDSHAKE_RESPONSE",
+                                        "success": false,
+                                        "error": "DEVICE_BLOCKED"
+                                    });
+                                    if let Ok(resp_str) = serde_json::to_string(&response) {
+                                        let _ = tx.send(Message::Text(resp_str));
+                                    }
+                                    return;
+                                }
+
                                 // 2. Load Crypto from shared secret
                                 use base64::Engine;
                                 if let Ok(secret_bytes) = base64::engine::general_purpose::STANDARD.decode(&device.shared_secret) {
@@ -323,7 +389,11 @@ async fn handle_connection(
                                         // 3. Register Client
                                         device_id = Some(dev_id_handshake.clone());
                                         
-                                        // Update last_seen in DB - TODO: Add update_last_seen method to DB
+                                        // Update last_seen in DB
+                                        {
+                                            let db_lock = db.lock().unwrap();
+                                            let _ = db_lock.update_device_last_seen(&dev_id_handshake);
+                                        }
                                         
                                         let mut clients_write = clients.write().await;
                                         clients_write.insert(dev_id_handshake.clone(), ClientInfo {
@@ -331,11 +401,12 @@ async fn handle_connection(
                                             device_name: device.name.clone(),
                                             sender: tx.clone(),
                                             crypto,
+                                            last_pong: Arc::new(Mutex::new(Instant::now())),
                                         });
                                         
                                         println!("Device reconnected and authenticated: {}", device.name);
                                         
-                                        // Send handshake response (optional, but good for confirmation)
+                                        // Send handshake response
                                         let response = serde_json::json!({
                                             "type": "HANDSHAKE_RESPONSE",
                                             "success": true
@@ -353,7 +424,7 @@ async fn handle_connection(
                                 let response = serde_json::json!({
                                     "type": "HANDSHAKE_RESPONSE",
                                     "success": false,
-                                    "error": "Device not found"
+                                    "error": "DEVICE_NOT_FOUND"
                                 });
                                 if let Ok(resp_str) = serde_json::to_string(&response) {
                                     let _ = tx.send(Message::Text(resp_str));
@@ -429,6 +500,7 @@ async fn handle_connection(
                                                 device_name: device_name,
                                                 sender: tx.clone(),
                                                 crypto,
+                                                last_pong: Arc::new(Mutex::new(Instant::now())),
                                             });
                                         } else {
                                             let response = WsMessage::PairingResponse {
@@ -458,7 +530,7 @@ async fn handle_connection(
                                 }
                             }
                         }
-                        WsMessage::ClipPush { payload_encrypted, iv, device_info: _ } => {
+                        WsMessage::ClipPush { payload_encrypted, iv, content_type, device_info: _ } => {
                             // Decrypt payload using device's crypto
                             if let Some(ref dev_id) = device_id {
                                 let clients_read = clients.read().await;
@@ -472,6 +544,7 @@ async fn handle_connection(
                                             let decrypted_msg = WsMessage::ClipPush {
                                                 payload_encrypted: decrypted_content, // Now contains plaintext
                                                 iv: String::new(),
+                                                content_type: content_type.clone(),
                                                 device_info: DeviceInfo {
                                                     name: client_info.device_name.clone(),
                                                     battery: None,
@@ -499,6 +572,17 @@ async fn handle_connection(
                                     device_id: dev_id.clone(),
                                     message: ws_msg,
                                 });
+                            }
+                        }
+                        WsMessage::Pong => {
+                            // Update last_pong time for this device
+                            if let Some(ref dev_id) = device_id {
+                                let clients_read = clients.read().await;
+                                if let Some(client_info) = clients_read.get(dev_id) {
+                                    let mut last_pong = client_info.last_pong.lock().unwrap();
+                                    *last_pong = Instant::now();
+                                    println!("[Heartbeat] Received PONG from {}", dev_id);
+                                }
                             }
                         }
                         _ => {

@@ -45,6 +45,7 @@ interface Device {
   platform: string;
   last_seen: string | null;
   is_blocked: boolean;
+  is_connected: boolean;
 }
 
 interface PairingData {
@@ -68,6 +69,8 @@ function App() {
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [clips, setClips] = useState<Clip[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
+  const [previousDevices, setPreviousDevices] = useState<Device[]>([]);
+  const [notification, setNotification] = useState<{message: string, type: 'success' | 'info'} | null>(null);
   const [showPairing, setShowPairing] = useState(false);
   const [pairingData, setPairingData] = useState<PairingData | null>(null);
   const [activeTab, setActiveTab] = useState<"dashboard" | "history" | "devices" | "settings">("dashboard");
@@ -117,6 +120,22 @@ function App() {
       setClips(clipsList);
       
       const devicesList = await invoke<Device[]>("get_devices");
+      
+      // Check for newly connected devices
+      if (previousDevices.length > 0) {
+        devicesList.forEach(device => {
+          const prevDevice = previousDevices.find(d => d.device_id === device.device_id);
+          if (prevDevice && !prevDevice.is_connected && device.is_connected) {
+            // Device just connected
+            showNotification(`${device.name} connected`, 'success');
+          } else if (prevDevice && prevDevice.is_connected && !device.is_connected) {
+            // Device just disconnected
+            showNotification(`${device.name} disconnected`, 'info');
+          }
+        });
+      }
+      
+      setPreviousDevices(devicesList);
       setDevices(devicesList);
     } catch (error) {
       console.error("Failed to load data:", error);
@@ -129,6 +148,11 @@ function App() {
     } catch (error) {
       console.error("Failed to load sync status:", error);
     }
+  }
+  
+  function showNotification(message: string, type: 'success' | 'info') {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 4000);
   }
 
   // Auto-refresh pairing QR if it's about to expire
@@ -282,6 +306,23 @@ function App() {
     const date = new Date(dateStr);
     return date.toLocaleString();
   };
+  
+  const formatRelativeTime = (dateStr: string | null) => {
+    if (!dateStr) return "Never";
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+    
+    if (diffSecs < 60) return "Just now";
+    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+    return formatDate(dateStr);
+  };
 
   const truncateContent = (content: string, maxLength: number = 100) => {
     if (content.length <= maxLength) return content;
@@ -290,6 +331,12 @@ function App() {
 
   return (
     <div className="app">
+      {/* Notification Toast */}
+      {notification && (
+        <div className={`notification-toast ${notification.type}`}>
+          {notification.type === 'success' ? '✓' : 'ℹ'} {notification.message}
+        </div>
+      )}
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-header">
@@ -546,21 +593,23 @@ function App() {
                 </div>
               ) : (
                 devices.map((device) => (
-                  <div key={device.device_id} className="device-item">
+                  <div key={device.device_id} className={`device-item ${device.is_connected ? 'connected' : ''}`}>
                     <div className="device-info">
                       <div className="device-icon-wrapper">
                         <Smartphone size={24} />
+                        {device.is_connected && (
+                          <span className="status-dot online" title="Online"></span>
+                        )}
                       </div>
                       <div className="device-details">
-                        <h4>{device.name}</h4>
+                        <h4>
+                          {device.name}
+                          {device.is_connected && <span className="online-badge">Online</span>}
+                        </h4>
                         <p>
                           {device.platform}
-                          {device.last_seen && (
-                            <>
-                              <span className="separator">•</span>
-                              Last seen: {formatDate(device.last_seen)}
-                            </>
-                          )}
+                          <span className="separator">•</span>
+                          {device.is_connected ? "Connected now" : `Last sync: ${formatRelativeTime(device.last_seen)}`}
                         </p>
                       </div>
                     </div>

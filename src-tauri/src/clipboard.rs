@@ -10,7 +10,8 @@ use tokio::time;
 use crate::crypto::calculate_hash;
 use crate::database::models::SyncMode;
 
-const MAX_CONTENT_SIZE: usize = 2 * 1024 * 1024; // 2MB limit
+const MAX_CONTENT_SIZE: usize = 2 * 1024 * 1024; // 2MB limit for text
+const MAX_IMAGE_SIZE: usize = 10 * 1024 * 1024; // 10MB limit for images
 
 pub struct ClipboardMonitor {
     clipboard: Arc<Mutex<Clipboard>>,
@@ -22,10 +23,17 @@ pub struct ClipboardMonitor {
     sync_mode: Arc<Mutex<SyncMode>>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClipboardContentType {
+    Text,
+    Image,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClipboardChange {
-    pub content: String,
+    pub content: String, // Text content or base64-encoded image
     pub content_hash: String,
+    pub content_type: ClipboardContentType,
     pub timestamp: Instant,
 }
 
@@ -69,18 +77,49 @@ impl ClipboardMonitor {
                     continue;
                 }
 
-                // Get current clipboard content
-                let content = {
+                // Try to get text content first
+                let (content, content_type) = {
                     let mut clip = clipboard.lock().await;
-                    match clip.get_text() {
-                        Ok(text) => text,
-                        Err(_) => continue, // No text content
+                    
+                    // Check for text first
+                    if let Ok(text) = clip.get_text() {
+                        if !text.is_empty() {
+                            (text, ClipboardContentType::Text)
+                        } else {
+                            // Try image if no text
+                            match clip.get_image() {
+                                Ok(img_data) => {
+                                    // Convert to base64 PNG
+                                    match Self::image_to_base64_png(&img_data) {
+                                        Ok(base64_img) => (base64_img, ClipboardContentType::Image),
+                                        Err(_) => continue,
+                                    }
+                                }
+                                Err(_) => continue,
+                            }
+                        }
+                    } else {
+                        // No text, try image
+                        match clip.get_image() {
+                            Ok(img_data) => {
+                                match Self::image_to_base64_png(&img_data) {
+                                    Ok(base64_img) => (base64_img, ClipboardContentType::Image),
+                                    Err(_) => continue,
+                                }
+                            }
+                            Err(_) => continue,
+                        }
                     }
                 };
 
-                // Validate content size
-                if content.len() > MAX_CONTENT_SIZE {
-                    eprintln!("Clipboard content exceeds 2MB limit, skipping");
+                // Validate content size based on type
+                let max_size = match content_type {
+                    ClipboardContentType::Text => MAX_CONTENT_SIZE,
+                    ClipboardContentType::Image => MAX_IMAGE_SIZE,
+                };
+                
+                if content.len() > max_size {
+                    eprintln!("Clipboard content exceeds size limit, skipping");
                     continue;
                 }
 
@@ -109,6 +148,7 @@ impl ClipboardMonitor {
                 let change = ClipboardChange {
                     content: content.clone(),
                     content_hash: current_hash,
+                    content_type,
                     timestamp: Instant::now(),
                 };
 
@@ -197,6 +237,73 @@ impl ClipboardMonitor {
         *self.last_remote_clip_id.lock().await = None;
         *self.last_remote_hash.lock().await = None;
         *self.last_remote_timestamp.lock().await = None;
+    }
+
+    /// Convert arboard ImageData to base64 PNG string
+    fn image_to_base64_png(img_data: &arboard::ImageData) -> Result<String> {
+        use base64::Engine;
+        use std::io::Cursor;
+        
+        // Create an image buffer from the raw data
+        let width = img_data.width as u32;
+        let height = img_data.height as u32;
+        
+        // Create RGBA image from bytes
+        let img = image::RgbaImage::from_raw(width, height, img_data.bytes.clone().into_owned())
+            .ok_or_else(|| anyhow::anyhow!("Failed to create image from clipboard data"))?;
+        
+        // Encode to PNG
+        let mut png_bytes = Cursor::new(Vec::new());
+        img.write_to(&mut png_bytes, image::ImageFormat::Png)?;
+        
+        // Convert to base64
+        let base64_str = base64::engine::general_purpose::STANDARD.encode(png_bytes.get_ref());
+        
+        Ok(base64_str)
+    }
+
+    /// Set clipboard content from base64-encoded image
+    pub async fn set_clipboard_image(&self, base64_data: &str, clip_id: &str) -> Result<()> {
+        use base64::Engine;
+        
+        // Validate size
+        if base64_data.len() > MAX_IMAGE_SIZE {
+            return Err(anyhow::anyhow!("Image exceeds 10MB limit"));
+        }
+
+        // Calculate hash
+        let hash = calculate_hash(base64_data);
+
+        // Update suppress state
+        *self.last_remote_clip_id.lock().await = Some(clip_id.to_string());
+        *self.last_remote_hash.lock().await = Some(hash.clone());
+        *self.last_remote_timestamp.lock().await = Some(Instant::now());
+
+        // Decode base64 to bytes
+        let img_bytes = base64::engine::general_purpose::STANDARD
+            .decode(base64_data)
+            .map_err(|e| anyhow::anyhow!("Failed to decode base64 image: {}", e))?;
+
+        // Load image
+        let img = image::load_from_memory(&img_bytes)?;
+        let rgba = img.to_rgba8();
+        
+        // Create arboard ImageData
+        let img_data = arboard::ImageData {
+            width: rgba.width() as usize,
+            height: rgba.height() as usize,
+            bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+        };
+
+        // Set clipboard
+        let mut clipboard = self.clipboard.lock().await;
+        clipboard.set_image(img_data)?;
+
+        // Update last content hash
+        *self.last_content_hash.lock().await = Some(hash);
+
+        println!("Image set to clipboard from remote");
+        Ok(())
     }
 }
 

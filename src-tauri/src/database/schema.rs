@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS clips (
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
     content_hash TEXT NOT NULL,
+    content_type TEXT DEFAULT 'text',
     source_device TEXT,
     source_app TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

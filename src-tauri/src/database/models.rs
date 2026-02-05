@@ -13,11 +13,25 @@ pub struct Device {
     pub created_at: String,
 }
 
+/// Type of clipboard content
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ClipboardType {
+    Text,
+    Image, // Base64 encoded PNG/JPEG
+}
+
+impl Default for ClipboardType {
+    fn default() -> Self {
+        ClipboardType::Text
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     pub id: String,
     pub content: String,
     pub content_hash: String,
+    pub content_type: Option<String>, // "text" or "image"
     pub source_device: Option<String>,
     pub source_app: Option<String>,
     pub created_at: String,
@@ -83,6 +97,7 @@ pub enum ServerState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PairingData {
     pub server_ip: String,
     pub server_port: u16,
@@ -91,6 +106,7 @@ pub struct PairingData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct EncryptedPayload {
     pub data: Vec<u8>,
     pub iv: [u8; 12],
@@ -105,6 +121,7 @@ pub enum WsMessage {
         clip_id: String,
         payload_encrypted: String, // base64
         iv: String,               // base64
+        content_type: Option<String>, // "text" or "image"
         source_app: Option<String>,
         timestamp: i64,
     },
@@ -112,6 +129,7 @@ pub enum WsMessage {
     ClipPush {
         payload_encrypted: String,
         iv: String,
+        content_type: Option<String>, // "text" or "image"
         device_info: DeviceInfo,
     },
     #[serde(rename = "GET_LATEST")]
@@ -138,6 +156,10 @@ pub enum WsMessage {
     Handshake {
         device_id: String,
     },
+    #[serde(rename = "PING")]
+    Ping,
+    #[serde(rename = "PONG")]
+    Pong,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

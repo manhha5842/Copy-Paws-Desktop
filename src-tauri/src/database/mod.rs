@@ -114,15 +114,25 @@ impl Database {
         Ok(())
     }
 
+    /// Update device last_seen timestamp
+    pub fn update_device_last_seen(&self, device_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ?1",
+            params![device_id],
+        )?;
+        Ok(())
+    }
+
     // Clip operations
     pub fn add_clip(&self, clip: &Clip) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO clips (id, content, content_hash, source_device, source_app, created_at, is_pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO clips (id, content, content_hash, content_type, source_device, source_app, created_at, is_pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 &clip.id,
                 &clip.content,
                 &clip.content_hash,
+                &clip.content_type,
                 &clip.source_device,
                 &clip.source_app,
                 &clip.created_at,
@@ -134,7 +144,7 @@ impl Database {
 
     pub fn get_clips(&self, limit: usize) -> Result<Vec<Clip>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, content, content_hash, source_device, source_app, created_at, is_pinned
+            "SELECT id, content, content_hash, content_type, source_device, source_app, created_at, is_pinned
              FROM clips ORDER BY created_at DESC LIMIT ?1"
         )?;
 
@@ -143,10 +153,11 @@ impl Database {
                 id: row.get(0)?,
                 content: row.get(1)?,
                 content_hash: row.get(2)?,
-                source_device: row.get(3)?,
-                source_app: row.get(4)?,
-                created_at: row.get(5)?,
-                is_pinned: row.get(6)?,
+                content_type: row.get(3)?,
+                source_device: row.get(4)?,
+                source_app: row.get(5)?,
+                created_at: row.get(6)?,
+                is_pinned: row.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -242,6 +253,7 @@ mod tests {
             id: "test-123".to_string(),
             content: "Hello World".to_string(),
             content_hash: "hash123".to_string(),
+            content_type: Some("text".to_string()),
             source_device: Some("LOCAL".to_string()),
             source_app: Some("Test".to_string()),
             created_at: chrono::Utc::now().to_rfc3339(),

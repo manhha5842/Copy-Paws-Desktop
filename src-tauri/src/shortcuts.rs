@@ -1,9 +1,6 @@
-use tauri::{AppHandle, Manager, Emitter};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState, Code, Modifiers};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use tauri::{AppHandle, Manager};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use crate::AppState;
-use crate::database::models::HotkeysConfig;
 use enigo::{Enigo, Key, Keyboard, Settings, Direction};
 
 pub struct ShortcutsManager {

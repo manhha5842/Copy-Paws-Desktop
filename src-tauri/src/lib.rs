@@ -151,18 +151,13 @@ async fn generate_pairing_qr(state: State<'_, AppState>) -> Result<String, Strin
 
 #[tauri::command]
 async fn get_pairing_data(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    // Try to get existing pairing, or generate a new one
-    let pairing_data = match state.pairing_manager.get_latest_pairing() {
-        Some(data) => data,
-        None => {
-            // Generate new pairing
-            let ip_address = get_local_ip().unwrap_or_else(|| "0.0.0.0".to_string());
-            let port = 8765;
-            state.pairing_manager
-                .generate_pairing(ip_address, port)
-                .map_err(|e| format!("Failed to generate pairing: {}", e))?
-        }
-    };
+    // Always generate a fresh pairing token to avoid stale tokens
+    let ip_address = get_local_ip().unwrap_or_else(|| "0.0.0.0".to_string());
+    let port = 8765;
+    
+    let pairing_data = state.pairing_manager
+        .generate_pairing(ip_address, port)
+        .map_err(|e| format!("Failed to generate pairing: {}", e))?;
     
     let pairing_json = serde_json::to_string(&pairing_data)
         .map_err(|e| format!("Failed to serialize pairing data: {}", e))?;
@@ -374,6 +369,7 @@ async fn add_test_clip(content: String, state: State<'_, AppState>) -> Result<()
         id: clip_id,
         content,
         content_hash,
+        content_type: Some("text".to_string()),
         source_device: None, 
         source_app: Some("Test Client".to_string()),
         created_at: Utc::now().to_rfc3339(),
@@ -429,6 +425,14 @@ pub fn run() {
     
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // When second instance is launched, focus the existing main window
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                println!("Second instance detected, focusing existing window");
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(move |app, shortcut, event| {
             if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
@@ -436,6 +440,13 @@ pub fn run() {
                 shortcuts_manager.handle_shortcut_event(shortcut.to_string());
             }
         }).build())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Prevent window close, just hide it
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+        })
         .setup(move |app| {
             // Get app data directory using portable approach
             let app_dir = if cfg!(target_os = "windows") {
@@ -504,11 +515,11 @@ pub fn run() {
 
             let app_state = AppState { 
                 db, 
-                settings, 
+                settings: settings.clone(), // Clone for tray closure
                 pairing_manager,
                 server_id: server_id.clone(),
                 ws_server: ws_server.clone(),
-                clipboard_monitor,
+                clipboard_monitor: clipboard_monitor.clone(), // Clone for tray
                 sync_manager,
                 mdns_service,
             };
@@ -536,6 +547,80 @@ pub fn run() {
                     println!("WebSocket server started on port 8765");
                 }
             });
+
+            // --- System Tray Setup ---
+            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, CheckMenuItem};
+            use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+
+            // Defines items
+            let start = MenuItem::with_id(app, "show", "Show CopyPaws", true, None::<&str>).unwrap();
+            let pause = CheckMenuItem::with_id(app, "pause", "Pause Sync", true, false, None::<&str>).unwrap();
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>).unwrap();
+            
+            let menu = Menu::with_items(app, &[
+                &start,
+                &PredefinedMenuItem::separator(app).unwrap(),
+                &pause,
+                &PredefinedMenuItem::separator(app).unwrap(),
+                &quit,
+            ]).unwrap();
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(move |app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                window.show().unwrap();
+                                window.set_focus().unwrap();
+                            }
+                        }
+                        "pause" => {
+                            let app_handle = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let state: State<AppState> = app_handle.state();
+                                let mut settings = state.settings.write().await;
+                                
+                                // Toggle (menu item check state isn't auto-managed by logic here perfectly without querying, 
+                                // but for simplicity we toggle based on current internal state)
+                                let new_mode = match settings.sync_mode {
+                                    SyncMode::Paused => SyncMode::Auto,
+                                    _ => SyncMode::Paused,
+                                };
+                                settings.sync_mode = new_mode.clone();
+                                state.clipboard_monitor.set_sync_mode(new_mode.clone()).await;
+                                
+                                // Update DB
+                                let db = state.db.lock().unwrap();
+                                let mode_str = match new_mode {
+                                    SyncMode::Auto => "Auto",
+                                    SyncMode::Paused => "Paused",
+                                    _ => "Auto",
+                                };
+                                db.set_setting("sync_mode", mode_str).ok();
+                                
+                                // Note: Updating the checkmark visually requires keeping a reference to the item or querying it, 
+                                // skipping complex UI sync for this MVP step.
+                            });
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
 
             Ok(())
         })

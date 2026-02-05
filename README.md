@@ -1,88 +1,116 @@
 # CopyPaws Desktop
 
-This folder contains all desktop-related components of the CopyPaws ecosystem.
+**Hub server** chính trong hệ sinh thái CopyPaws - đồng bộ clipboard giữa desktop và mobile devices.
 
-## Components
-
-| Folder | Description | Status |
-|--------|-------------|--------|
-| [clipboard-hub](./clipboard-hub/) | Main CopyPaws Desktop application (Tauri) | Active Development |
-| [test-client](./test-client/) | Web-based WebSocket testing tool | Ready for Testing |
-
-## Overview
-
-CopyPaws Desktop is the **hub server** in the CopyPaws ecosystem. It:
-
-- Monitors your desktop clipboard
-- Runs a WebSocket server for mobile connections
-- Manages device pairing and encryption
-- Stores clipboard history locally
-
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
-# Navigate to the main app
-cd clipboard-hub
-
-# Install dependencies
+# Cài dependencies
 npm install
 
-# Run in development mode
+# Chạy development mode
 npm run tauri dev
+
+# Build production
+npm run tauri build
 ```
 
-## Architecture
+## 📁 Cấu trúc
 
 ```
-Desktop Folder
-├── clipboard-hub/      # Main Tauri application
-│   ├── src/           # React frontend
-│   └── src-tauri/     # Rust backend
+Desktop/
+├── src/                    # React Frontend (TypeScript)
+│   ├── App.tsx            # Main application
+│   ├── App.css            # Styling
+│   ├── HistoryWindow.tsx  # Clipboard history popup
+│   └── main.tsx           # Entry point
 │
-└── test-client/       # Testing tool
-    ├── index.html     # Web interface
-    ├── styles.css     # Styling
-    └── script.js      # WebSocket client
+├── src-tauri/             # Rust Backend
+│   └── src/
+│       ├── lib.rs         # Tauri commands & app initialization
+│       ├── websocket.rs   # WebSocket server (port 8765)
+│       ├── clipboard.rs   # Clipboard monitoring
+│       ├── crypto.rs      # AES-256-GCM encryption
+│       ├── pairing.rs     # QR code pairing
+│       ├── sync_manager.rs # Sync orchestration
+│       ├── mdns.rs        # mDNS service discovery
+│       ├── shortcuts.rs   # Global hotkeys
+│       └── database/      # SQLite storage
+│
+└── public/                # Static assets
 ```
 
-## Development Status
+## ✅ Tính năng hoàn thành
 
-### Completed
-- Project initialization with Tauri
-- Database layer (SQLite)
-- Encryption module (AES-256-GCM)
-- WebSocket server structure
-- Clipboard monitoring
-- QR code pairing
-- Sync manager
-- mDNS service discovery
-- React dashboard UI
+### Core Features
+- ✅ **WebSocket Server** - Multi-client, port 8765
+- ✅ **Clipboard Monitoring** - Real-time với anti-loop
+- ✅ **AES-256-GCM Encryption** - End-to-end encryption
+- ✅ **QR Code Pairing** - Token expires sau 5 phút
+- ✅ **SQLite Database** - Lưu clips, devices, settings
+- ✅ **mDNS Discovery** - Auto-discover service
+- ✅ **Sync Manager** - Auto/Hotkey/ReceiveOnly/Paused modes
 
-### In Progress
-- WebSocket server activation on startup
-- End-to-end clipboard sync
-- System tray integration
+### Global Shortcuts
+- ✅ `Ctrl+Alt+C` - Push clipboard to devices
+- ✅ `Ctrl+Alt+V` - Paste latest (simulates Ctrl+V)
+- ✅ `Super+Alt+V` - Toggle history window
 
-### Planned
-- Auto-start on boot
-- Keyboard shortcuts
-- Multiple clipboard format support
-- Cloud relay (v2)
+### Dashboard UI
+- ✅ Server status display
+- ✅ Clipboard history list
+- ✅ Connected devices list
+- ✅ Real-time device count
+- ✅ QR code generation
+- ✅ Pin/Delete clips
+- ✅ Block/Revoke devices
+- ✅ Settings page
+- ✅ Autostart toggle | Sync mode control
+- ✅ History popup window
 
-## Testing
+## 🔧 Sync Modes
 
-Use the `test-client` folder to test WebSocket communication:
+| Mode | Mô tả |
+|------|-------|
+| **Auto** | Tự động sync mỗi khi copy |
+| **HotkeyOnly** | Chỉ sync khi nhấn hotkey |
+| **ReceiveOnly** | Chỉ nhận, không gửi |
+| **Paused** | Tạm dừng hoàn toàn |
 
-1. Run CopyPaws Desktop in dev mode
-2. Open `test-client/index.html` in a browser
-3. Connect to `localhost:8765`
-4. Test clipboard sync functionality
+## 🧪 Testing
 
-## Related
+Sử dụng `test-client` để test WebSocket:
 
-- **Mobile Apps**: See `../Mobile-iOS/` and `../Mobile-Android/` (coming soon)
-- **Documentation**: See `Desktop.md` for full specifications
+1. Chạy Desktop app: `npm run tauri dev`
+2. Mở `../test-client/index.html` trong browser
+3. Kết nối đến `localhost:8765`
+4. Test pairing và clipboard sync
+
+## 📊 Tiến độ
+
+Xem chi tiết tại [PROGRESS.md](./PROGRESS.md)
+
+| Module | Status |
+|--------|--------|
+| WebSocket Server | ✅ 100% |
+| Clipboard Monitoring | ✅ 100% |
+| Encryption | ✅ 100% |
+| Pairing | ✅ 100% |
+| Database | ✅ 100% |
+| Global Shortcuts | ✅ 100% |
+| Frontend Dashboard | ✅ 100% |
+
+## 📋 TODO
+
+- [ ] System tray integration
+- [ ] Multiple clipboard formats (images, files)
+- [ ] Cloud relay (sync qua internet)
+- [ ] Auto-pair (không cần QR mỗi lần)
+
+## 📚 API Reference
+
+Xem [MOBILE_API_REFERENCE.md](./MOBILE_API_REFERENCE.md) để hiểu protocol WebSocket.
 
 ---
 
-Part of the **CopyPaws** project.
+Part of the **CopyPaws** ecosystem.
