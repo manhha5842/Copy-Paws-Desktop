@@ -22,6 +22,7 @@ import {
   Play,
 } from "lucide-react";
 import "./App.css";
+import { formatDateTime, formatRelativeTime } from "./utils/date";
 
 interface ServerStatus {
   status: string;
@@ -301,29 +302,6 @@ function App() {
       }
   }
 
-
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleString();
-  };
-  
-  const formatRelativeTime = (dateStr: string | null) => {
-    if (!dateStr) return "Never";
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffSecs = Math.floor(diffMs / 1000);
-    const diffMins = Math.floor(diffSecs / 60);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-    
-    if (diffSecs < 60) return "Just now";
-    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-    return formatDate(dateStr);
-  };
-
   const truncateContent = (content: string, maxLength: number = 100) => {
     if (content.length <= maxLength) return content;
     return content.substring(0, maxLength) + "...";
@@ -488,7 +466,7 @@ function App() {
                 <p className="clip-content">{truncateContent(clips[0].content, 200)}</p>
                 <div className="clip-meta">
                   <Clock size={14} />
-                  <span>{formatDate(clips[0].created_at)}</span>
+                  <span>{formatDateTime(clips[0].created_at)}</span>
                   {clips[0].source_app && (
                     <>
                       <Monitor size={14} />
@@ -536,7 +514,7 @@ function App() {
                       <p className="clip-text">{truncateContent(clip.content)}</p>
                       <div className="clip-meta">
                         <Clock size={12} />
-                        <span>{formatDate(clip.created_at)}</span>
+                        <span>{formatDateTime(clip.created_at)}</span>
                         {clip.source_app && (
                           <>
                             <Monitor size={12} />

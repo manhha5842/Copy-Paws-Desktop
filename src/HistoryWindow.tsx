@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
+import { formatDateTime } from "./utils/date";
 
 interface Clip {
   id: string;
@@ -73,6 +74,7 @@ function HistoryWindow() {
             >
                 <div className="history-content">{clip.content}</div>
                 <div className="history-meta">
+                  <span>{formatDateTime(clip.created_at)}</span>
                   {clip.source_device ? <span>From: {clip.source_device}</span> : null}
                 </div>
             </div>
@@ -122,6 +124,9 @@ function HistoryWindow() {
             margin-bottom: 4px;
         }
         .history-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
             font-size: 0.75rem;
             color: #888;
         }
